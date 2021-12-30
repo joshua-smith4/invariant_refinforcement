@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import pickle
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -15,13 +16,14 @@ train_y0 = []
 train_x1 = []
 train_y1 = []
 
-num_classes = 4
-points_per_class = 100
+num_classes = 2
+num_cases = 4
+points_per_case = 100
 batch_size = 20
 num_epochs = 80
 
-for i in range(num_classes):
-    for j in range(points_per_class):
+for i in range(num_cases):
+    for j in range(points_per_case):
         tmp = np.random.rand(2, 1).astype(np.float32) / 2
         if i == 0:
             pass
@@ -54,26 +56,39 @@ l = tf.Variable(train_y[0], dtype=tf.float32, trainable=False)
 w1 = tf.Variable(tf.random.normal((5, 2)), dtype=tf.float32)
 b1 = tf.Variable(tf.random.normal((5, 1)), dtype=tf.float32)
 
-w2 = tf.Variable(tf.random.normal((3, 5)), dtype=tf.float32)
-b2 = tf.Variable(tf.random.normal((3, 1)), dtype=tf.float32)
+w2 = tf.Variable(tf.random.normal((5, 5)), dtype=tf.float32)
+b2 = tf.Variable(tf.random.normal((5, 1)), dtype=tf.float32)
 
-w3 = tf.Variable(tf.random.normal((1, 3)), dtype=tf.float32)
-b3 = tf.Variable(tf.random.normal((1, 1)), dtype=tf.float32)
+w3 = tf.Variable(tf.random.normal((5, 5)), dtype=tf.float32)
+b3 = tf.Variable(tf.random.normal((5, 1)), dtype=tf.float32)
 
-trainable_parameters = [w1, b1, w2, b2, w3, b3]
+w4 = tf.Variable(tf.random.normal((1, 5)), dtype=tf.float32)
+b4 = tf.Variable(tf.random.normal((1, 1)), dtype=tf.float32)
+
+trainable_parameters = [w1, b1, w2, b2, w3, b3, w4, b4]
 
 
 def model():
     h1 = tf.nn.relu(tf.matmul(w1, i) + b1)
     h2 = tf.nn.relu(tf.matmul(w2, h1) + b2)
-    h3 = tf.nn.sigmoid(tf.matmul(w3, h2) + b3)
-    return h1, h2, h3
+    h3 = tf.nn.relu(tf.matmul(w3, h2) + b3)
+    h4 = tf.nn.sigmoid(tf.matmul(w4, h3) + b4)
+    return h1, h2, h3, h4
+
+
+def v(l, _i, x):
+    i.assign(x)
+    h1, h2, h3, h4 = model()
+    layers = [h1, h2, h3, h4]
+    layer = layers[l].numpy()
+    print(layer)
+    return layer[_i][0]
 
 
 optimizer = tf.keras.optimizers.Adam()
 
 
-def train_step(inputs, labels, alpha=0.001):
+def train_step(inputs, labels, inv_reinforce=True, alpha=0.001):
     acc_grads = [tf.zeros_like(x) for x in trainable_parameters]
     for p in range(len(inputs)):
         x = inputs[p]
@@ -81,81 +96,104 @@ def train_step(inputs, labels, alpha=0.001):
         with tf.GradientTape(persistent=True) as tape:
             i.assign(x)
             l.assign(y)
-            h1, h2, h3 = model()
-            loss = tf.keras.losses.mean_squared_error(h3, l)
+            h1, h2, h3, h4 = model()
+            loss = tf.keras.losses.mean_squared_error(h4, l)
         grads_h1 = tape.gradient(h1, trainable_parameters)
         grads_h2 = tape.gradient(h2, trainable_parameters)
         grads_h3 = tape.gradient(h3, trainable_parameters)
+        grads_h4 = tape.gradient(h4, trainable_parameters)
         grads_loss = tape.gradient(loss, trainable_parameters)
         del tape
         for j in range(len(grads_loss)):
             acc_grads[j] += grads_loss[j]
     for weight, grad in zip(trainable_parameters, acc_grads):
-        weight.assign(weight - alpha * grad)
+        weight.assign(weight - alpha * grad/len(inputs))
 
 
 def predicate(val, label):
     return (val >= 0.5 and label >= 0.5) or (val < 0.5 and label < 0.5)
 
+
 def accuracy(inputs, labels):
     num_correct = 0
     for x, y in zip(inputs, labels):
         i.assign(x)
-        _, _, h3 = model()
-        val = h3.numpy()[0, 0]
+        _, _, _, h4 = model()
+        val = h4.numpy()[0][0]
         if predicate(val, y):
             num_correct += 1
     return num_correct / len(inputs)
 
 
-def success_variance(inputs, label):
-    points_h1 = []
-    points_h2 = []
-    points_h3 = []
-    for x in inputs:
-        i.assign(x)
-        h1, h2, h3 = model()
-        val = h3.numpy()[0,0]
-        if predicate(val, label):
-            points_h1.append(h1.numpy())
-            points_h2.append(h2.numpy())
-            points_h3.append(h3.numpy())
-    return np.var(points_h1, axis=0), np.var(points_h2, axis=0), np.var(points_h3, axis=0)
+def allSafeNeuronValuesOverClass(C, label):
+    layer0 = []
+    layer1 = []
+    layer2 = []
+    layer3 = []
+    for c in C:
+        i.assign(c)
+        h1, h2, h3, h4 = model()
+        val = h4.numpy()[0][0]
+        if not predicate(val, label):
+            continue
+        layer0 += [h1]
+        layer1 += [h2]
+        layer2 += [h3]
+        layer3 += [h4]
+    return [np.array(layer0), np.array(layer1), np.array(layer2), np.array(layer3)]
 
-def success_stddev(inputs, label):
-    points_h1 = []
-    points_h2 = []
-    points_h3 = []
-    for x in inputs:
-        i.assign(x)
-        h1, h2, h3 = model()
-        val = h3.numpy()[0,0]
-        if predicate(val, label):
-            points_h1.append(h1.numpy())
-            points_h2.append(h2.numpy())
-            points_h3.append(h3.numpy())
-    return np.std(points_h1, axis=0), np.std(points_h2, axis=0), np.std(points_h3, axis=0)
+
+def calcMeanAndVariance(vals):
+    means = []
+    variances = []
+    for v in vals:
+        means += [np.mean(v, axis=0)]
+        variances += [np.var(v, axis=0)]
+    return means, variances
+
 
 dataset = dataset.shuffle(len(dataset))
-dataset = dataset.batch(40)
+dataset = dataset.batch(10)
 
-h03_var = []
-h13_var = []
-h03_std = []
-h13_std = []
+
+observed_neurons = [(0, 0), (1, 0), (2, 0), (3, 0)]
+observed_means0 = [[], [], [], []]
+observed_means1 = [[], [], [], []]
+observed_variances0 = [[], [], [], []]
+observed_variances1 = [[], [], [], []]
+num_correctly_classified = []
+accuracy_hist = []
+epoch_acc = []
 
 for epoch in range(num_epochs):
     print(f'Epoch: {epoch}')
-    for x, y in dataset:
-        train_step(x, y, 0.01)
-    v01, v02, v03 = success_variance(train_x0, 0)
-    v11, v12, v13 = success_variance(train_x1, 1)
-    s01, s02, s03 = success_stddev(train_x0, 0)
-    s11, s12, s13 = success_stddev(train_x1, 1)
-    h03_var.append(v03)
-    h13_var.append(v13)
-    h03_std.append(s03)
-    h13_std.append(s13)
+    for ind, (x, y) in enumerate(dataset):
+        #print(f'Batch {ind}')
+        c0 = allSafeNeuronValuesOverClass(train_x0, 0)
+        c1 = allSafeNeuronValuesOverClass(train_x1, 1)
+        num_correctly_classified.append(len(c0[0]))
+        m0, v0 = calcMeanAndVariance(c0)
+        m1, v1 = calcMeanAndVariance(c1)
+        for index, (_l, _i) in enumerate(observed_neurons):
+            observed_means0[index].append(m0[_l][_i][0])
+            observed_means1[index].append(m1[_l][_i][0])
+            observed_variances0[index].append(v0[_l][_i][0])
+            observed_variances1[index].append(v1[_l][_i][0])
+        acc = accuracy(train_x, train_y)
+        accuracy_hist.append(acc)
+        train_step(x, y, False, 0.01)
     acc = accuracy(train_x, train_y)
     per = acc * 100
-    print(f"Accuracy: {per}")
+    epoch_acc.append(acc)
+    print(f'Accuracy {per}')
+
+d = {}
+d['var0'] = observed_variances0
+d['var1'] = observed_variances1
+d['mean0'] = observed_means0
+d['mean1'] = observed_means1
+d['correct'] = num_correctly_classified
+d['acc'] = accuracy_hist
+d['epoch_acc'] = epoch_acc
+with open('out.pickle', 'wb') as f:
+    pickle.dump(d, f)
