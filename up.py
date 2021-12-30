@@ -73,12 +73,14 @@ def model():
     h2 = tf.nn.relu(tf.matmul(w2, h1) + b2)
     h3 = tf.nn.relu(tf.matmul(w3, h2) + b3)
     h4 = tf.nn.sigmoid(tf.matmul(w4, h3) + b4)
-    return h1, h2, h3, h4
+    neurons = [[x for x in h1], [x for x in h2],
+               [x for x in h3], [x for x in h4]]
+    return h1, h2, h3, h4, neurons
 
 
 def v(l, _i, x):
     i.assign(x)
-    h1, h2, h3, h4 = model()
+    h1, h2, h3, h4, _ = model()
     layers = [h1, h2, h3, h4]
     layer = layers[l].numpy()
     print(layer)
@@ -88,37 +90,64 @@ def v(l, _i, x):
 optimizer = tf.keras.optimizers.Adam()
 
 
-def train_step(inputs, labels, inv_reinforce=True, alpha=0.001):
+def predicate(val, label):
+    return (val >= 0.5 and label >= 0.5) or (val < 0.5 and label < 0.5)
+
+
+def train_step(inputs, labels, inv_reinforce, alpha, safe_neurons, safe_means, safe_variances, acc_threshold, num_training_points):
     acc_grads = [tf.zeros_like(x) for x in trainable_parameters]
+    inv_reinf_grads = [tf.zeros_like(x) for x in trainable_parameters]
+    num_in_batch_applied = 0
+    num_neurons = None
     for p in range(len(inputs)):
         x = inputs[p]
         y = labels[p]
         with tf.GradientTape(persistent=True) as tape:
             i.assign(x)
             l.assign(y)
-            h1, h2, h3, h4 = model()
+            h1, h2, h3, h4, neurons = model()
             loss = tf.keras.losses.mean_squared_error(h4, l)
-        grads_h1 = tape.gradient(h1, trainable_parameters)
-        grads_h2 = tape.gradient(h2, trainable_parameters)
-        grads_h3 = tape.gradient(h3, trainable_parameters)
-        grads_h4 = tape.gradient(h4, trainable_parameters)
         grads_loss = tape.gradient(loss, trainable_parameters)
-        del tape
         for j in range(len(grads_loss)):
             acc_grads[j] += grads_loss[j]
-    for weight, grad in zip(trainable_parameters, acc_grads):
-        weight.assign(weight - alpha * grad/len(inputs))
+        classification = h4[0][0].numpy()
+        label = y.numpy()
+        if num_neurons is None:
+            num_neurons = sum([len(layer) for layer in neurons])
+        class_percent_safe = safe_neurons[int(
+            label)][0].shape[0] / num_training_points
+        if not inv_reinforce or not predicate(classification, label) or class_percent_safe < acc_threshold:
+            del tape
+            continue
+        num_in_batch_applied += 1
+        for layer in range(len(neurons)):
+            for neuron_index, neuron in enumerate(neurons[layer]):
+                m = safe_means[int(label)][layer][neuron_index][0]
+                v = safe_variances[int(label)][layer][neuron_index][0]
+                neuron_grad = tape.gradient(neuron, trainable_parameters)
+                s = 0.0
+                if v > 0:
+                    s = (tf.nn.sigmoid((m - neuron.numpy())/v).numpy()
+                         [0] - 0.5) * 2.0
+                for grad_index, cur_grad in enumerate(neuron_grad):
+                    if cur_grad is None:
+                        continue
+                    inv_reinf_grads[grad_index] += s * cur_grad
 
-
-def predicate(val, label):
-    return (val >= 0.5 and label >= 0.5) or (val < 0.5 and label < 0.5)
+    for weight, grad, inv_grad in zip(trainable_parameters, acc_grads, inv_reinf_grads):
+        sgd_update = -alpha*grad/len(inputs)
+        inv_update = np.zeros_like(grad)
+        if num_in_batch_applied > 0:
+            inv_update = alpha * inv_grad / \
+                (num_in_batch_applied*num_neurons)
+        weight.assign(weight + sgd_update + inv_update)
 
 
 def accuracy(inputs, labels):
     num_correct = 0
     for x, y in zip(inputs, labels):
         i.assign(x)
-        _, _, _, h4 = model()
+        _, _, _, h4, _ = model()
         val = h4.numpy()[0][0]
         if predicate(val, y):
             num_correct += 1
@@ -132,7 +161,7 @@ def allSafeNeuronValuesOverClass(C, label):
     layer3 = []
     for c in C:
         i.assign(c)
-        h1, h2, h3, h4 = model()
+        h1, h2, h3, h4, _ = model()
         val = h4.numpy()[0][0]
         if not predicate(val, label):
             continue
@@ -180,8 +209,10 @@ for epoch in range(num_epochs):
             observed_variances0[index].append(v0[_l][_i][0])
             observed_variances1[index].append(v1[_l][_i][0])
         acc = accuracy(train_x, train_y)
+        print(f'Accuracy {acc}, batch {ind}')
         accuracy_hist.append(acc)
-        train_step(x, y, False, 0.01)
+        train_step(x, y, True, 0.01, [c0, c1], [
+                   m0, m1], [v0, v1], 0.2, len(train_x))
     acc = accuracy(train_x, train_y)
     per = acc * 100
     epoch_acc.append(acc)
