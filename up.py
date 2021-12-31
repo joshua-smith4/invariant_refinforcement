@@ -186,10 +186,10 @@ dataset = dataset.batch(10)
 
 
 observed_neurons = [(0, 0), (1, 0), (2, 0), (3, 0)]
-observed_means0 = [[], [], [], []]
-observed_means1 = [[], [], [], []]
-observed_variances0 = [[], [], [], []]
-observed_variances1 = [[], [], [], []]
+observed_means0 = [[] for x in observed_neurons]
+observed_means1 = [[] for x in observed_neurons]
+observed_variances0 = [[] for x in observed_neurons]
+observed_variances1 = [[] for x in observed_neurons]
 num_correctly_classified = []
 accuracy_hist = []
 epoch_acc = []
