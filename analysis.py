@@ -4,73 +4,86 @@ import matplotlib.pyplot as plt
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--results_file', default='out.pickle')
-parser.add_argument('--title', default='Invariant Reinforcement')
+parser.add_argument('-f', '--results_files', nargs='+', dest='results_files')
+parser.add_argument('--dataset_names', nargs='+')
 
 args = parser.parse_args()
 
-with open(args.results_file, 'rb') as f:
-    results = pickle.load(f)
+if args.results_files is None or len(args.results_files) <= 0:
+    parser.print_help()
+    exit()
+if args.dataset_names is None or len(args.dataset_names) <= 0:
+    args.dataset_names = [ x.split('/')[-1].split('.')[0] for x in args.results_files]
 
-var_class0 = results['var0']
-var_class1 = results['var1']
-mean_class0 = results['mean0']
-mean_class1 = results['mean1']
-num_correct = results['correct']
-accuracy = results['acc']
-epoch_acc = results['epoch_acc']
+observed_neurons = [(0, 0), (1, 0), (2, 0), (3, 0),
+                    (0, 1), (0, 2), (0, 3), (0, 4),
+                    (1, 1), (1, 2), (1, 3), (1, 4),
+                    (2, 1), (2, 2), (2, 3), (2, 4)]
 
-# class 0 variance
-class0_fig = plt.figure(constrained_layout=True, figsize=(20, 8))
-var_subfig_0, mean_subfig_0 = class0_fig.subfigures(2, 1)
+results = []
+for res_file in args.results_files:
+    with open(res_file, 'rb') as f:
+        results.append(pickle.load(f))
 
-var_subplts = var_subfig_0.subplots(1, 4)
-var_subplts[0].plot(range(len(var_class0[0])), var_class0[0])
-var_subplts[0].set_title('Layer 0')
-var_subplts[1].plot(range(len(var_class0[1])), var_class0[1])
-var_subplts[1].set_title('Layer 1')
-var_subplts[2].plot(range(len(var_class0[2])), var_class0[2])
-var_subplts[2].set_title('Layer 2')
-var_subplts[3].plot(range(len(var_class0[3])), var_class0[3])
-var_subplts[3].set_title('Layer 3')
-var_subfig_0.suptitle('Variance', fontsize='x-large')
+variance_fig_0 = plt.figure(constrained_layout=True, figsize=(20, 8))
+variance_fig_1 = plt.figure(constrained_layout=True, figsize=(20, 8))
+variance_fig_0.suptitle('Variance Class 0')
+variance_fig_1.suptitle('Variance Class 1')
+variance_subplots_0 = variance_fig_0.subplots(4, 4)
+variance_subplots_1 = variance_fig_1.subplots(4, 4)
 
+mean_fig_0 = plt.figure(constrained_layout=True, figsize=(20, 8))
+mean_fig_1 = plt.figure(constrained_layout=True, figsize=(20, 8))
+mean_fig_0.suptitle('Mean Class 0')
+mean_fig_1.suptitle('Mean Class 1')
+mean_subplots_0 = mean_fig_0.subplots(4, 4)
+mean_subplots_1 = mean_fig_1.subplots(4, 4)
 
-mean_subplts = mean_subfig_0.subplots(1, 4)
-mean_subplts[0].plot(range(len(mean_class0[0])), mean_class0[0])
-mean_subplts[1].plot(range(len(mean_class0[1])), mean_class0[1])
-mean_subplts[2].plot(range(len(mean_class0[2])), mean_class0[2])
-mean_subplts[3].plot(range(len(mean_class0[3])), mean_class0[3])
-mean_subfig_0.suptitle('Mean', fontsize='x-large')
+accuracy_fig = plt.figure(constrained_layout=True, figsize=(20, 8))
+accuracy_fig.suptitle('Accuracy')
+accuracy_plt = accuracy_fig.subplots(1, 1)
 
-class0_fig.suptitle(f'Class 0 - {args.title}', fontsize='xx-large')
-
-class1_fig = plt.figure(constrained_layout=True, figsize=(20, 8))
-var_subfig_1, mean_subfig_1 = class1_fig.subfigures(2, 1)
-var_class1_subplts = var_subfig_1.subplots(1, 4)
-var_class1_subplts[0].plot(range(len(var_class1[0])), var_class1[0])
-var_class1_subplts[0].set_title('Layer 0')
-var_class1_subplts[1].plot(range(len(var_class1[1])), var_class1[1])
-var_class1_subplts[1].set_title('Layer 1')
-var_class1_subplts[2].plot(range(len(var_class1[2])), var_class1[2])
-var_class1_subplts[2].set_title('Layer 2')
-var_class1_subplts[3].plot(range(len(var_class1[3])), var_class1[3])
-var_class1_subplts[3].set_title('Layer 3')
-var_subfig_1.suptitle('Variance', fontsize='x-large')
-
-mean_class1_subplts = mean_subfig_1.subplots(1, 4)
-mean_class1_subplts[0].plot(range(len(mean_class1[0])), mean_class1[0])
-mean_class1_subplts[1].plot(range(len(mean_class1[1])), mean_class1[1])
-mean_class1_subplts[2].plot(range(len(mean_class1[2])), mean_class1[2])
-mean_class1_subplts[3].plot(range(len(mean_class1[3])), mean_class1[3])
-mean_subfig_1.suptitle('Mean', fontsize='x-large')
-
-class1_fig.suptitle(f'Class 1 - {args.title}', fontsize='xx-large')
-
-# batch accuracy
-batch_accuracy = plt.figure()
-acc_subplot = batch_accuracy.subplots(1,1)
-acc_subplot.plot(range(len(accuracy)), accuracy)
-batch_accuracy.suptitle(f'Accuracy - {args.title}', fontsize='xx-large')
+for index, result in enumerate(results):
+    var_class0 = result['var0']
+    var_class1 = result['var1']
+    mean_class0 = result['mean0']
+    mean_class1 = result['mean1']
+    num_correct = result['correct']
+    accuracy = result['acc']
+    epoch_acc = result['epoch_acc']
+    for i in range(4):
+        for j in range(4):
+            flatIndex = i*4 + j
+            subplt = variance_subplots_0[i, j]
+            subplt.plot(var_class0[flatIndex], label=f'{args.dataset_names[index]}')
+            _l, _i = observed_neurons[flatIndex]
+            subplt.set_title(f'Layer {_l} Index {_i}')
+            subplt.legend()
+    for i in range(4):
+        for j in range(4):
+            flatIndex = i*4 + j
+            subplt = variance_subplots_1[i, j]
+            subplt.plot(var_class1[flatIndex], label=f'{args.dataset_names[index]}')
+            _l, _i = observed_neurons[flatIndex]
+            subplt.set_title(f'Layer {_l} Index {_i}')
+            subplt.legend()
+    for i in range(4):
+        for j in range(4):
+            flatIndex = i*4 + j
+            subplt = mean_subplots_0[i, j]
+            subplt.plot(mean_class0[flatIndex], label=f'{args.dataset_names[index]}')
+            _l, _i = observed_neurons[flatIndex]
+            subplt.set_title(f'Layer {_l} Index {_i}')
+            subplt.legend()
+    for i in range(4):
+        for j in range(4):
+            flatIndex = i*4 + j
+            subplt = mean_subplots_1[i, j]
+            subplt.plot(mean_class1[flatIndex], label=f'{args.dataset_names[index]}')
+            _l, _i = observed_neurons[flatIndex]
+            subplt.set_title(f'Layer {_l} Index {_i}')
+            subplt.legend()
+    accuracy_plt.plot(accuracy, label=f'{args.dataset_names[index]}')
+    accuracy_plt.legend()
 
 plt.show()
