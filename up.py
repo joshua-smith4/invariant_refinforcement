@@ -2,7 +2,27 @@ import numpy as np
 import tensorflow as tf
 import pickle
 import os
+import argparse
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--inv_reinf', default='false')
+parser.add_argument('--out_file', default='out.pickle')
+parser.add_argument('--normalize_batch', default='true')
+parser.add_argument('--normalize_neurons', default='true')
+parser.add_argument('--min_layer', type=int, default=0)
+parser.add_argument('--func', default='xor')
+
+args = parser.parse_args()
+args.inv_reinf = args.inv_reinf == 'true'
+if args.inv_reinf:
+    print(f'using invariant reinforcement on layers greater than or equal to {args.min_layer}')
+args.normalize_batch = args.normalize_batch == 'true'
+if args.normalize_batch:
+    print('normalizing by size of batch')
+args.normalize_neurons = args.normalize_neurons == 'true'
+if args.normalize_neurons:
+    print('normalizing by number of neurons')
 
 tf.random.set_seed(42)
 np.random.seed(42)
@@ -22,29 +42,48 @@ points_per_case = 100
 batch_size = 20
 num_epochs = 80
 
+if args.func == 'xor':
+    print('training xor function')
+elif args.func == 'and':
+    print('training and function')
+
 for i in range(num_cases):
     for j in range(points_per_case):
         tmp = np.random.rand(2, 1).astype(np.float32) / 2
         if i == 0:
-            pass
             train_y.append(0.0)
             train_y0.append(0.0)
             train_x0.append(tmp)
         elif i == 1:
             tmp[0] += 0.5
-            train_y.append(1.0)
-            train_y1.append(1.0)
-            train_x1.append(tmp)
+            if args.func == 'xor':
+                train_y.append(1.0)
+                train_y1.append(1.0)
+                train_x1.append(tmp)
+            if args.func == 'and':
+                train_y.append(0.0)
+                train_y0.append(0.0)
+                train_x0.append(tmp)
         elif i == 2:
             tmp[1] += 0.5
-            train_y.append(1.0)
-            train_y1.append(1.0)
-            train_x1.append(tmp)
+            if args.func == 'xor':
+                train_y.append(1.0)
+                train_y1.append(1.0)
+                train_x1.append(tmp)
+            if args.func == 'and':
+                train_y.append(0.0)
+                train_y0.append(0.0)
+                train_x0.append(tmp)
         elif i == 3:
             tmp += 0.5
-            train_y.append(0.0)
-            train_y0.append(0.0)
-            train_x0.append(tmp)
+            if args.func == 'xor':
+                train_y.append(0.0)
+                train_y0.append(0.0)
+                train_x0.append(tmp)
+            if args.func == 'and':
+                train_y.append(1.0)
+                train_y1.append(1.0)
+                train_x1.append(tmp)
         train_x.append(tmp)
 
 
@@ -98,6 +137,7 @@ def train_step(inputs, labels, inv_reinforce, alpha, safe_neurons, safe_means, s
     acc_grads = [tf.zeros_like(x) for x in trainable_parameters]
     inv_reinf_grads = [tf.zeros_like(x) for x in trainable_parameters]
     num_in_batch_applied = 0
+    num_neurons_applied = 0
     num_neurons = None
     for p in range(len(inputs)):
         x = inputs[p]
@@ -120,26 +160,31 @@ def train_step(inputs, labels, inv_reinforce, alpha, safe_neurons, safe_means, s
             del tape
             continue
         num_in_batch_applied += 1
-        for layer in range(len(neurons)):
+        for layer in range(len(neurons)-1, args.min_layer - 1, -1):
+            num_neurons_applied += len(neurons[layer])
             for neuron_index, neuron in enumerate(neurons[layer]):
                 m = safe_means[int(label)][layer][neuron_index][0]
                 v = safe_variances[int(label)][layer][neuron_index][0]
                 neuron_grad = tape.gradient(neuron, trainable_parameters)
                 s = 0.0
                 if v > 0:
-                    s = (tf.nn.sigmoid((m - neuron.numpy())/v).numpy()
+                    s = (tf.nn.sigmoid((m - neuron.numpy())/np.sqrt(v)).numpy()
                          [0] - 0.5) * 2.0
                 for grad_index, cur_grad in enumerate(neuron_grad):
                     if cur_grad is None:
                         continue
                     inv_reinf_grads[grad_index] += s * cur_grad
+        del tape
 
     for weight, grad, inv_grad in zip(trainable_parameters, acc_grads, inv_reinf_grads):
         sgd_update = -alpha*grad/len(inputs)
-        inv_update = np.zeros_like(grad)
+        inv_update = np.zeros_like(weight)
         if num_in_batch_applied > 0:
-            inv_update = alpha * inv_grad / \
-                (num_in_batch_applied*num_neurons)
+            inv_update = alpha * inv_grad
+            if args.normalize_batch:
+                inv_update /= num_in_batch_applied
+            if args.normalize_neurons:
+                inv_update /= num_neurons_applied
         weight.assign(weight + sgd_update + inv_update)
 
 
@@ -185,7 +230,11 @@ dataset = dataset.shuffle(len(dataset))
 dataset = dataset.batch(10)
 
 
-observed_neurons = [(0, 0), (1, 0), (2, 0), (3, 0)]
+observed_neurons = [(0, 0), (1, 0), (2, 0), (3, 0),
+                    (0, 1), (0, 2), (0, 3), (0, 4),
+                    (1, 1), (1, 2), (1, 3), (1, 4),
+                    (2, 1), (2, 2), (2, 3), (2, 4)]
+
 observed_means0 = [[] for x in observed_neurons]
 observed_means1 = [[] for x in observed_neurons]
 observed_variances0 = [[] for x in observed_neurons]
@@ -197,22 +246,31 @@ epoch_acc = []
 for epoch in range(num_epochs):
     print(f'Epoch: {epoch}')
     for ind, (x, y) in enumerate(dataset):
-        #print(f'Batch {ind}')
         c0 = allSafeNeuronValuesOverClass(train_x0, 0)
         c1 = allSafeNeuronValuesOverClass(train_x1, 1)
         num_correctly_classified.append(len(c0[0]))
         m0, v0 = calcMeanAndVariance(c0)
         m1, v1 = calcMeanAndVariance(c1)
         for index, (_l, _i) in enumerate(observed_neurons):
-            observed_means0[index].append(m0[_l][_i][0])
-            observed_means1[index].append(m1[_l][_i][0])
-            observed_variances0[index].append(v0[_l][_i][0])
-            observed_variances1[index].append(v1[_l][_i][0])
+            m0_val = np.nan
+            v0_val = np.nan
+            m1_val = np.nan
+            v1_val = np.nan
+            if len(c0[0]) > 0:
+                m0_val = m0[_l][_i][0]
+                v0_val = v0[_l][_i][0]
+            if len(c1[0]) > 0:
+                m1_val = m1[_l][_i][0]
+                v1_val = v1[_l][_i][0]
+            observed_means0[index].append(m0_val)
+            observed_variances0[index].append(v0_val)
+            observed_means1[index].append(m1_val)
+            observed_variances1[index].append(v1_val)
         acc = accuracy(train_x, train_y)
         print(f'Accuracy {acc}, batch {ind}')
         accuracy_hist.append(acc)
-        train_step(x, y, True, 0.01, [c0, c1], [
-                   m0, m1], [v0, v1], 0.2, len(train_x))
+        train_step(x, y, args.inv_reinf, 0.01, [c0, c1], [
+                   m0, m1], [v0, v1], 0.3, len(train_x))
     acc = accuracy(train_x, train_y)
     per = acc * 100
     epoch_acc.append(acc)
@@ -226,5 +284,5 @@ d['mean1'] = observed_means1
 d['correct'] = num_correctly_classified
 d['acc'] = accuracy_hist
 d['epoch_acc'] = epoch_acc
-with open('out.pickle', 'wb') as f:
+with open(args.out_file, 'wb') as f:
     pickle.dump(d, f)
