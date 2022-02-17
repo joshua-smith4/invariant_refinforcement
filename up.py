@@ -12,11 +12,13 @@ parser.add_argument('--normalize_batch', default='true')
 parser.add_argument('--normalize_neurons', default='true')
 parser.add_argument('--min_layer', type=int, default=0)
 parser.add_argument('--func', default='xor')
+parser.add_argument('--save_file', default="network.pickle")
 
 args = parser.parse_args()
 args.inv_reinf = args.inv_reinf == 'true'
 if args.inv_reinf:
-    print(f'using invariant reinforcement on layers greater than or equal to {args.min_layer}')
+    print(
+        f'using invariant reinforcement on layers greater than or equal to {args.min_layer}')
 args.normalize_batch = args.normalize_batch == 'true'
 if args.normalize_batch:
     print('normalizing by size of batch')
@@ -286,3 +288,15 @@ d['acc'] = accuracy_hist
 d['epoch_acc'] = epoch_acc
 with open(args.out_file, 'wb') as f:
     pickle.dump(d, f)
+
+n = {}
+n['w1'] = w1.numpy()
+n['b1'] = b1.numpy()
+n['w2'] = w2.numpy()
+n['b2'] = b2.numpy()
+n['w3'] = w3.numpy()
+n['b3'] = b3.numpy()
+n['w4'] = w4.numpy()
+n['b4'] = b4.numpy()
+with open(args.save_file, 'wb') as f:
+    pickle.dump(n, f)
