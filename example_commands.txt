@@ -1,0 +1,11 @@
+# training a network using invariant reinforcement
+python up.py --inv_reinf=true --out_file=inv_reinf.pickle --save_file=inv_reinf_network.pickle
+
+# training a network using invariant reinforcement on the 'and' function
+python up.py --inv_reinf=true --out_file=inv_reinf.pickle --save_file=inv_reinf_network.pickle --func=and
+
+# loading a saved network in python interpretter
+python -i load_network.py --network_file inv_reinf_network.pickle
+
+# producing the graphs shown in the results directory
+python analysis.py -f inv_reinf.pickle --dataset_names "inv_reinf"
